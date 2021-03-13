@@ -23,7 +23,7 @@ def main(argv):
     recv = sock.recvfrom(PACKET_SIZE)
 
     #initialise expected ack
-    expected_seq = 1
+    expected_seq = 0
     while recv: # while there is data in the socket, keep recieving it
 
         
@@ -36,11 +36,11 @@ def main(argv):
         seq = int.from_bytes(r_buf[0:2], "big") # sequence number
         eof = r_buf[2] #eof flag
         payload = r_buf[3:] 
-
-        print("expected ack: %d received ack:" % expected_seq, seq)
+        #print(seq)
 
         if (seq == expected_seq):
             #print("Correct ack received")
+            print(seq)
 
             ack = seq.to_bytes(2, byteorder='big') # we just send the sequence number back and that will suffice for ack
             sock.sendto(ack, sender) # send ack
@@ -65,7 +65,11 @@ def main(argv):
 
         else:
             #print("Wrong ack, sending ack for most recent in order packet")
-            ack = (expected_seq - 1).to_bytes(2, byteorder='big') #previous in order packet is the packet before the expected one
+            if expected_seq == 0:
+                ack = (0).to_bytes(2, byteorder='big')
+            else:
+                ack = (expected_seq - 1).to_bytes(2, byteorder='big') #previous in order packet is the packet before the expected one
+            
             sock.sendto(ack, sender) # send duplicate ack
         
 

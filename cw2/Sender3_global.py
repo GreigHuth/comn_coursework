@@ -17,8 +17,8 @@ ACK_SIZE = 2
 
 #global variables
 t = None
-base = 1
-seq_num = 1
+base = 0
+seq_num = 0
 c = threading.Condition()
 
 
@@ -26,41 +26,6 @@ def timer():
     start = round(time.time() * 1000)
     while True:
         yield round(time.time() * 1000) - start
-
-
-
-#idk if this is even a good idea but im cba thinking about it rn
-def ack_thread(sock):
-
-    print("Ack thread started")
-    while True:
-        global t
-        global base
-        global seq_num
-
-        r_buf = sock.recvfrom(2)#recv 2 bytes for ack
-
-        ack = r_buf[0]
-        ack = int.from_bytes(ack, "big")
-
-        #print("received ack: %d" % ack)
-        
-        c.acquire()
-        #CRITICAL SECTION
-        base = ack+1
- 
-        if (ack == (seq_num-1)):#ack should be for the last packet we sent
-
-            if (base == seq_num):
-                t = None
-            else:
-                t = timer()
-        #CRITICAL SECTION OVER
-            
-        c.release()
-        
-
-
 
 
 def make_packet(i, file_buf):
@@ -72,9 +37,8 @@ def make_packet(i, file_buf):
     #set eof flag
     eof = (0).to_bytes(1, byteorder='big')
 
-    print("seq num: %d"% i)
-    print(len(file_buf))
     if (len(file_buf) < PAYLOAD_SIZE): 
+        #print ("sending last packet")
         end = True
         eof = (1).to_bytes(1, byteorder='big')
 
@@ -87,6 +51,76 @@ def make_packet(i, file_buf):
 
     #return packet and seqeuence number of packet
     return s_buf, end
+
+
+#idk if this is even a good idea but im cba thinking about it rn
+def ack_thread(sock):
+    global t
+    global base
+    global seq_num
+
+    print("Ack thread started")
+    while True:
+        
+        r_buf = sock.recvfrom(2)#recv 2 bytes for ack
+
+        ack = r_buf[0]
+        ack = int.from_bytes(ack, "big")
+
+        #print("received ack: %d" % ack)
+        
+        c.acquire()
+        base = ack+1
+        
+
+        if (ack == (seq_num-1)):#ack should be for the last packet we sent
+
+            if (base == seq_num):
+                t = None
+            else:
+                t = timer()
+
+        c.release() 
+        #CRITICAL SECTION OVER
+            
+
+def send_thread(sock, f, HOST, PORT, N):
+
+    global t
+    global base
+    global seq_num
+
+    file_buf = f.read(PAYLOAD_SIZE)
+
+    print("Sender Thread Started")
+    while (file_buf): #while the file can still be read 
+
+        #print("base: %d"% base)
+        #print("seq_num: %d"% seq_num)
+
+        c.acquire()
+        if (seq_num < (base+N)):
+            #print("sending packet")
+            s_buf, end = make_packet(seq_num, file_buf)
+            sock.sendto(s_buf, (HOST, PORT)) #send data
+            
+            if (base == seq_num): #set timer if first packet in window
+                t = timer()
+
+            
+            seq_num += 1 
+            
+            #only read the next part of the file if we actually sent the last part
+            file_buf = f.read(PAYLOAD_SIZE)
+
+            if end == True:
+                c.release()
+                break
+
+        c.release()
+
+    print("Sending done, waiting for acks")
+
 
 
 
@@ -106,7 +140,7 @@ def main(argv):
 
     #need queues for all the shared variables
 
-    global t
+    global t 
     global base
     global seq_num
 
@@ -116,62 +150,52 @@ def main(argv):
     start = time.time()#performance measuring
 
     f = open(FILE, 'rb')
-    file_buf = f.read(PAYLOAD_SIZE)
 
     #thread for recieving acks
     t1 = threading.Thread(target=ack_thread, args=(sock,))
     t1.start()
-
-    print("Sender Thread Started")
-    while (True): #while the file can still be read 
-
-        #print("base: %d"% base)
-        #print("seq_num: %d"% seq_num)
-
-        if (seq_num < (base+N)):
-            s_buf, end = make_packet(seq_num, file_buf)
-            sock.sendto(s_buf, (HOST, PORT)) #send data
-
-
+    
+    t2 = threading.Thread(target=send_thread, args=(sock, f, HOST, PORT, N)) 
+    t2.start()
+   
+    time.sleep(0.1)#wait for threads to init
+    end = False
             
-            if (base == seq_num): #first packet in window
-                t = timer()
+    while True:
 
-            #CRITICAL SECTION
-            c.acquire()
-            seq_num += 1 
-            c.release()
-            #CRITICAL SECTION OVER
+        try:
+            delta_t = next(t)
+        except TypeError:
+            continue
 
-            file_buf = f.read(PAYLOAD_SIZE)
-
-            
-        
-        #check timer
-        delta_t = next(t)
         if (delta_t >= TIMEOUT):#if we time out, resend all unacked packets in window
-
+            #print("retransmitting")
             t = timer()
-
-            i = base
-            f.seek(i*(PAYLOAD_SIZE-1))
             
+            c.acquire()
+            i = base
+            f.seek(i*PAYLOAD_SIZE)
+                
             for i in range(i, seq_num):
+                retries += 1
                 file_buf = f.read(PAYLOAD_SIZE)
                 s_buf, end = make_packet(i, file_buf)
                 sock.sendto(s_buf, (HOST, PORT))
 
+            #f.seek(seq_num*PAYLOAD_SIZE)
             file_buf = f.read(PAYLOAD_SIZE)
-            
 
-        
-
+            c.release()
+        if end == True and base == seq_num :
+            #if we have sent the last packet and its been acked then we can break
+            break
 
         #time.sleep(1)
 
     print("Finished")
     #end
     t1.join()    
+    t2.join()
     f.close()    
 
 
