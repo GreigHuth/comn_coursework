@@ -19,6 +19,8 @@ ACK_SIZE = 2
 t = None
 base = 0
 seq_num = 0
+end = False
+tp = 0
 c = threading.Condition()
 
 
@@ -58,41 +60,46 @@ def ack_thread(sock):
     global t
     global base
     global seq_num
+    global end
 
-    print("Ack thread started")
     while True:
         
         r_buf = sock.recvfrom(2)#recv 2 bytes for ack
 
         ack = r_buf[0]
-        ack = int.from_bytes(ack, "big")
+        ack = int.from_bytes(ack, "big")  
 
-        #print("received ack: %d" % ack)
-        
-        c.acquire()
-        base = ack+1
-        
+        print("Recieved ack : %d"%ack)
 
-        if (ack == (seq_num-1)):#ack should be for the last packet we sent
+        if (ack == (seq_num-1)):#cumulative ack, 
+            c.acquire()
+            base = ack+1
+
+            if end == True and base==seq_num:
+                c.release() 
+                break
 
             if (base == seq_num):
                 t = None
             else:
                 t = timer()
 
-        c.release() 
-        #CRITICAL SECTION OVER
-            
+            c.release() 
+
+        
+
+
 
 def send_thread(sock, f, HOST, PORT, N):
 
     global t
     global base
     global seq_num
+    global tp
+    global end
 
     file_buf = f.read(PAYLOAD_SIZE)
 
-    print("Sender Thread Started")
     while (file_buf): #while the file can still be read 
 
         #print("base: %d"% base)
@@ -103,6 +110,7 @@ def send_thread(sock, f, HOST, PORT, N):
             #print("sending packet")
             s_buf, end = make_packet(seq_num, file_buf)
             sock.sendto(s_buf, (HOST, PORT)) #send data
+            tp += len(file_buf)
             
             if (base == seq_num): #set timer if first packet in window
                 t = timer()
@@ -119,17 +127,13 @@ def send_thread(sock, f, HOST, PORT, N):
 
         c.release()
 
-    print("Sending done, waiting for acks")
-
 
 
 
 def main(argv):
 
     #performance tracking
-    total     = 0   #total number of packets sent
     retries   = 0   #number of retransmissions
-    file_size = 0   #file size in bytes
 
     #unpack arguments
     HOST = argv[1]
@@ -138,16 +142,15 @@ def main(argv):
     TIMEOUT = int(argv[4])
     N = int(argv[5]) #window size
 
-    #need queues for all the shared variables
-
     global t 
     global base
     global seq_num
+    global end
+    global tp
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    
 
-    start = time.time()#performance measuring
+    
 
     f = open(FILE, 'rb')
 
@@ -157,10 +160,9 @@ def main(argv):
     
     t2 = threading.Thread(target=send_thread, args=(sock, f, HOST, PORT, N)) 
     t2.start()
-   
+    start = time.time()#performance measuring
+
     time.sleep(0.1)#wait for threads to init
-    end = False
-            
     while True:
 
         try:
@@ -168,11 +170,12 @@ def main(argv):
         except TypeError:
             continue
 
+        c.acquire()
         if (delta_t >= TIMEOUT):#if we time out, resend all unacked packets in window
             #print("retransmitting")
             t = timer()
             
-            c.acquire()
+            
             i = base
             f.seek(i*PAYLOAD_SIZE)
                 
@@ -185,12 +188,12 @@ def main(argv):
             #f.seek(seq_num*PAYLOAD_SIZE)
             file_buf = f.read(PAYLOAD_SIZE)
 
-            c.release()
-        if end == True and base == seq_num :
+            
+        if end == True and base==seq_num:
             #if we have sent the last packet and its been acked then we can break
+            c.release()
             break
-
-        #time.sleep(1)
+        c.release()
 
     print("Finished")
     #end
@@ -200,8 +203,10 @@ def main(argv):
 
 
     delta = time.time() - start
-    tp = round((file_size/delta)/1000)
-
+    print("tp: %d"%tp)
+    print("delta: %d"%delta)
+    print()
+    tp = (tp/delta)/1000
     output = "{} {}".format(retries, tp) 
     print (output)
 

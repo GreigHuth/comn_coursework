@@ -40,7 +40,7 @@ def main(argv):
 
         if (seq == expected_seq):
             #print("Correct ack received")
-            print(seq)
+            #print(seq)
 
             ack = seq.to_bytes(2, byteorder='big') # we just send the sequence number back and that will suffice for ack
             sock.sendto(ack, sender) # send ack
