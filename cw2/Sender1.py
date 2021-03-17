@@ -1,3 +1,6 @@
+#Greig Huth 
+#s1532620
+
 import socket
 import sys
 from time import sleep
@@ -14,14 +17,6 @@ def main(argv):
 
     #set up socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-
-    #TODO RDT 1.0 (completely unrealiable lol)
-    # read file from system into ram
-    # while not EOF
-    #   take first 1024 bytes from the file and attach the header
-    #   send this chunk
-    # 
 
 
     f = open(FILE, 'rb')

@@ -1,3 +1,6 @@
+#Greig Huth 
+#s1532620
+
 import socket
 import sys
 import time 
